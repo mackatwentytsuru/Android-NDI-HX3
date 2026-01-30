@@ -1,0 +1,9 @@
+# NDI Library Directory (armeabi-v7a)
+
+Place libndi.so for 32-bit ARM here (optional).
+
+Download the NDI SDK from: https://ndi.video/
+Extract and copy the Android armeabi-v7a libndi.so to this directory.
+
+Note: This is optional. Most modern devices use arm64-v8a.
+To enable 32-bit support, also add "armeabi-v7a" to abiFilters in build.gradle.kts

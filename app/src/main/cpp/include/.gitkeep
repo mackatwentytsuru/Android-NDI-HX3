@@ -1,0 +1,14 @@
+# NDI SDK Headers Directory
+
+Place the official NDI SDK header files here:
+
+Required files from NDI SDK (include/ directory):
+- Processing.NDI.Lib.h
+- Processing.NDI.structs.h
+- Processing.NDI.utilities.h
+- Processing.NDI.Find.h
+- Processing.NDI.Recv.h
+- Processing.NDI.Send.h (optional)
+- Processing.NDI.deprecated.h
+
+Download the NDI SDK from: https://ndi.video/

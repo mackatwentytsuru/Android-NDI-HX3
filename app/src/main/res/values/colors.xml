@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="primary">#1976D2</color>
+    <color name="primary_dark">#1565C0</color>
+    <color name="accent">#FF4081</color>
+    <color name="recording_red">#F44336</color>
+    <color name="recording_button_color">#D32F2F</color>
+    <color name="connected_green">#4CAF50</color>
+    <color name="disconnected_gray">#9E9E9E</color>
+    <color name="osd_background">#80000000</color>
+    <color name="surface_dark">#121212</color>
+</resources>

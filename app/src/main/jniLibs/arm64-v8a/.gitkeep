@@ -1,0 +1,6 @@
+# NDI Library Directory (arm64-v8a)
+
+Place libndi.so for 64-bit ARM here.
+
+Download the NDI SDK from: https://ndi.video/
+Extract and copy the Android arm64-v8a libndi.so to this directory.
