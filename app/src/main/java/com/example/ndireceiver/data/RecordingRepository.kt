@@ -126,27 +126,35 @@ class RecordingRepository(private val context: Context) {
         var width = 0
         var height = 0
 
-        val retriever = MediaMetadataRetriever()
-        try {
-            retriever.setDataSource(file.absolutePath)
-
-            // Get duration
-            val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            durationMs = durationStr?.toLongOrNull() ?: 0L
-
-            // Get dimensions
-            val widthStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-            val heightStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
-            width = widthStr?.toIntOrNull() ?: 0
-            height = heightStr?.toIntOrNull() ?: 0
-
+        val retriever = try {
+            MediaMetadataRetriever()
         } catch (e: Exception) {
-            Log.e(TAG, "Error extracting metadata from ${file.name}", e)
-        } finally {
+            Log.e(TAG, "Error creating MediaMetadataRetriever for ${file.name}", e)
+            null
+        }
+
+        if (retriever != null) {
             try {
-                retriever.release()
+                retriever.setDataSource(file.absolutePath)
+
+                // Get duration
+                val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                durationMs = durationStr?.toLongOrNull() ?: 0L
+
+                // Get dimensions
+                val widthStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                val heightStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                width = widthStr?.toIntOrNull() ?: 0
+                height = heightStr?.toIntOrNull() ?: 0
+
             } catch (e: Exception) {
-                Log.e(TAG, "Error releasing MediaMetadataRetriever", e)
+                Log.e(TAG, "Error extracting metadata from ${file.name}", e)
+            } finally {
+                try {
+                    retriever.release()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error releasing MediaMetadataRetriever", e)
+                }
             }
         }
 
@@ -159,6 +167,57 @@ class RecordingRepository(private val context: Context) {
             width = width,
             height = height
         )
+    }
+
+    /**
+     * Rename a recording file.
+     *
+     * @param recording The recording to rename
+     * @param newName The new name (without extension)
+     * @return Result<Recording> containing the renamed recording or error message
+     */
+    suspend fun renameRecording(recording: Recording, newName: String): Result<Recording> = withContext(Dispatchers.IO) {
+        try {
+            // Validate new name
+            val trimmedName = newName.trim()
+            if (trimmedName.isEmpty()) {
+                return@withContext Result.failure(IllegalArgumentException("Name cannot be empty"))
+            }
+            if (trimmedName.contains('/') || trimmedName.contains('\\')) {
+                return@withContext Result.failure(IllegalArgumentException("Name cannot contain path separators"))
+            }
+
+            // Ensure .mp4 extension
+            val fullNewName = if (trimmedName.endsWith(".mp4", ignoreCase = true)) {
+                trimmedName
+            } else {
+                "$trimmedName.mp4"
+            }
+
+            // No-op rename
+            if (fullNewName == recording.file.name) {
+                return@withContext Result.success(recording)
+            }
+
+            // Check if file with new name already exists
+            val newFile = File(recording.file.parentFile, fullNewName)
+            if (newFile.exists() && newFile.absolutePath != recording.file.absolutePath) {
+                return@withContext Result.failure(IllegalArgumentException("A recording with this name already exists"))
+            }
+
+            // Rename the file
+            if (recording.file.renameTo(newFile)) {
+                Log.i(TAG, "Renamed recording: ${recording.name} -> $fullNewName")
+                val renamedRecording = getRecordingMetadata(newFile)
+                Result.success(renamedRecording)
+            } else {
+                Log.e(TAG, "Failed to rename recording: ${recording.name}")
+                Result.failure(Exception("Failed to rename file"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error renaming recording: ${recording.name}", e)
+            Result.failure(e)
+        }
     }
 
     /**

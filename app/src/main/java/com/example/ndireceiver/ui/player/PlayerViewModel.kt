@@ -10,8 +10,8 @@ import com.example.ndireceiver.media.UncompressedVideoRenderer
 import com.example.ndireceiver.media.VideoDecoder
 import com.example.ndireceiver.media.VideoRecorder
 import com.example.ndireceiver.ndi.ConnectionState
+import com.example.ndireceiver.ndi.FourCC
 import com.example.ndireceiver.ndi.NdiFrameCallback
-import com.example.ndireceiver.ndi.NdiNative
 import com.example.ndireceiver.ndi.NdiReceiver
 import com.example.ndireceiver.ndi.NdiSource
 import com.example.ndireceiver.ndi.VideoFrameData
@@ -77,7 +77,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
 
     @Volatile private var lastInfoWidth = 0
     @Volatile private var lastInfoHeight = 0
-    @Volatile private var lastInfoFourCC = 0
+    @Volatile private var lastInfoFourCC: FourCC = FourCC.UNKNOWN
     @Volatile private var lastInfoIsCompressed = false
 
     // Recording state
@@ -297,9 +297,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
      * Start recording the NDI stream.
      */
     fun startRecording(): Boolean {
-        if (isRecordingEnabled) {
-            return false  // Already recording
-        }
+        if (isRecordingEnabled) return false
 
         if (currentVideoWidth == 0 || currentVideoHeight == 0) {
             _uiState.value = _uiState.value.copy(
@@ -308,15 +306,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
             return false
         }
 
-        if (!lastReceivedFrameWasCompressed) {
-            _uiState.value = _uiState.value.copy(
-                recordingState = RecordingState.Error("Recording requires compressed H.264/H.265 frames")
-            )
-            return false
-        }
-
-        val rec = recorder
-        if (rec == null) {
+        val rec = recorder ?: run {
             _uiState.value = _uiState.value.copy(
                 recordingState = RecordingState.Error("Recorder not initialized")
             )
@@ -324,20 +314,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
         }
 
         try {
-            rec.startRecording(currentVideoWidth, currentVideoHeight, currentIsHevc)
-            isRecordingEnabled = true
+            if (lastReceivedFrameWasCompressed) {
+                rec.startRecording(currentVideoWidth, currentVideoHeight, currentIsHevc)
+            } else {
+                // It's an uncompressed format that we can encode
+                if (lastInfoFourCC == FourCC.UYVY || lastInfoFourCC == FourCC.BGRA || lastInfoFourCC == FourCC.BGRX) {
+                    rec.startRecording(currentVideoWidth, currentVideoHeight, lastInfoFourCC)
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        recordingState = RecordingState.Error("Unsupported format for recording: ${lastInfoFourCC.name}")
+                    )
+                    return false
+                }
+            }
 
-            // Start duration update loop
+            isRecordingEnabled = true
             viewModelScope.launch {
                 while (isActive && isRecordingEnabled) {
                     val duration = rec.getRecordingDurationMs()
                     _uiState.value = _uiState.value.copy(
                         recordingState = RecordingState.Recording(duration)
                     )
-                    delay(1000)  // Update every second
+                    delay(1000)
                 }
             }
-
             return true
         } catch (e: Exception) {
             _uiState.value = _uiState.value.copy(
@@ -346,6 +346,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
             return false
         }
     }
+
 
     /**
      * Stop recording.
@@ -392,58 +393,45 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
     // ========== NdiFrameCallback implementation ==========
 
     override fun onVideoFrame(frame: VideoFrameData) {
-        // Capture surface locally to prevent race condition
         val currentSurface = surface ?: return
 
-        // Update video dimensions for recording / UI
         currentVideoWidth = frame.width
         currentVideoHeight = frame.height
         lastReceivedFrameWasCompressed = frame.isCompressed
+        lastInfoFourCC = frame.fourCC
 
         maybeUpdateVideoInfo(frame)
 
+        if (isRecordingEnabled) {
+            recorder?.writeFrame(frame)
+        }
+
         if (!frame.isCompressed) {
-            // NDI SDK v6 delivers uncompressed pixel buffers (BGRA/UYVY/etc.) for HX3; render directly.
             if (decoderInitialized) {
                 releaseDecoder()
             }
             uncompressedRenderer?.render(frame)
-            updateBitrateInfo(frame.data.remaining())
-            return
-        }
+        } else {
+            val mimeType = when (frame.fourCC) {
+                FourCC.H264 -> VideoDecoder.MIME_H264
+                FourCC.HEVC -> VideoDecoder.MIME_H265
+                else -> VideoDecoder.MIME_H265
+            }
+            currentIsHevc = (mimeType == VideoDecoder.MIME_H265)
 
-        // Compressed frames: MediaCodec expects H.264/H.265 NAL units.
-        val mimeType = when (frame.fourCC) {
-            NdiNative.FourCC.H264 -> VideoDecoder.MIME_H264
-            NdiNative.FourCC.HEVC -> VideoDecoder.MIME_H265
-            else -> VideoDecoder.MIME_H265
-        }
-        currentIsHevc = (mimeType == VideoDecoder.MIME_H265)
-
-        // Thread-safe decoder initialization on first compressed frame
-        if (!decoderInitialized) {
-            synchronized(decoderLock) {
-                if (!decoderInitialized && surface != null) {
-                    if (decoder == null) {
-                        decoder = VideoDecoder()
+            if (!decoderInitialized) {
+                synchronized(decoderLock) {
+                    if (!decoderInitialized && surface != null) {
+                        decoder = decoder ?: VideoDecoder()
+                        decoder?.initialize(currentSurface, frame.width, frame.height, mimeType)
+                        decoder?.start()
+                        decoderInitialized = true
                     }
-                    decoder?.initialize(currentSurface, frame.width, frame.height, mimeType)
-                    decoder?.start()
-                    decoderInitialized = true
                 }
             }
+            decoder?.submitFrame(frame)
         }
-
-        // The ByteBuffer is native-backed and becomes invalid after receiverFreeVideo().
-        // Copy it before handing it to the async decoder thread.
-        val safeFrame = frame.copy(data = copyByteBuffer(frame.data))
-        decoder?.submitFrame(safeFrame)
-
-        updateBitrateInfo(safeFrame.data.remaining())
-
-        if (isRecordingEnabled) {
-            recorder?.writeFrame(safeFrame)
-        }
+        updateBitrateInfo(frame.data.remaining())
     }
 
     override fun onConnectionLost() {
@@ -484,12 +472,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
 
         val label = if (frame.isCompressed) {
             when (frame.fourCC) {
-                NdiNative.FourCC.H264 -> "H.264"
-                NdiNative.FourCC.HEVC -> "H.265"
-                else -> "Compressed (${fourCCLabel(frame.fourCC)})"
+                FourCC.H264 -> "H.264"
+                FourCC.HEVC -> "H.265"
+                else -> "Compressed (${frame.fourCC.name})"
             }
         } else {
-            "Raw ${fourCCLabel(frame.fourCC)}"
+            "Raw ${frame.fourCC.name}"
         }
 
         val info = "${frame.width}x${frame.height} @ ${String.format("%.1f", fps)}fps | $label"
@@ -499,21 +487,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
             videoWidth = frame.width,
             videoHeight = frame.height
         )
-    }
-
-    private fun fourCCLabel(fourCC: Int): String {
-        return when (fourCC) {
-            NdiNative.FourCC.UYVY -> "UYVY"
-            NdiNative.FourCC.BGRA -> "BGRA"
-            NdiNative.FourCC.BGRX -> "BGRX"
-            NdiNative.FourCC.RGBA -> "RGBA"
-            NdiNative.FourCC.RGBX -> "RGBX"
-            NdiNative.FourCC.NV12 -> "NV12"
-            NdiNative.FourCC.I420 -> "I420"
-            NdiNative.FourCC.H264 -> "H264"
-            NdiNative.FourCC.HEVC -> "HEVC"
-            else -> String.format("0x%08X", fourCC)
-        }
     }
 
     private fun copyByteBuffer(src: ByteBuffer): ByteBuffer {

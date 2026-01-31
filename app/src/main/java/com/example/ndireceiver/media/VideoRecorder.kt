@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Log
+import com.example.ndireceiver.ndi.FourCC
 import com.example.ndireceiver.ndi.VideoFrameData
 import java.io.File
 import java.nio.ByteBuffer
@@ -16,269 +17,240 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * VideoRecorder: MediaMuxer wrapper for H.264/H.265 passthrough recording.
+ * VideoRecorder: A versatile video recorder for Android that handles both
+ * compressed (H.264/H.265) and uncompressed (UYVY, etc.) NDI video frames.
  *
- * Records compressed video frames directly to MP4 without re-encoding,
- * achieving zero CPU overhead for the encoding process.
+ * For compressed frames, it acts as a passthrough muxer, writing the data
+ * directly to an MP4 container with minimal overhead.
  *
- * Key implementation details:
- * - Extracts CSD (SPS/PPS for H.264, VPS/SPS/PPS for H.265) from NAL units
- * - Detects keyframes from NAL unit types
- * - Uses relative timestamps starting from 0
- * - Writes frames on a background thread for non-blocking operation
+ * For uncompressed frames, it implements a full encoding pipeline:
+ * 1. Color space conversion (e.g., UYVY to NV12) using `ColorSpaceConverter`.
+ * 2. Real-time H.264 encoding via `UncompressedVideoEncoder`.
+ * 3. Muxing the encoded frames into an MP4 file.
+ *
+ * All I/O, conversion, and encoding operations are performed on a dedicated
+ * background thread to prevent blocking the main NDI receiver thread.
  */
-class VideoRecorder(private val outputDir: File) {
+class VideoRecorder(
+    private val outputDir: File,
+    private val encoderFactory: (width: Int, height: Int, bitRate: Int, outputFile: File) -> VideoEncoder =
+        { width, height, bitRate, outputFile -> UncompressedVideoEncoder(width, height, bitRate, outputFile) }
+) {
 
     companion object {
         private const val TAG = "VideoRecorder"
         private const val WRITE_QUEUE_SIZE = 30
-        private const val NAL_START_CODE = 0x00000001
+        private const val BITRATE_1080P = 8 * 1024 * 1024 // 8 Mbps
 
         // H.264 NAL unit types
         private const val H264_NAL_TYPE_MASK = 0x1F
-        private const val H264_NAL_IDR = 5        // IDR frame (keyframe)
-        private const val H264_NAL_SPS = 7        // Sequence Parameter Set
-        private const val H264_NAL_PPS = 8        // Picture Parameter Set
+        private const val H264_NAL_IDR = 5
+        private const val H264_NAL_SPS = 7
+        private const val H264_NAL_PPS = 8
 
         // H.265 NAL unit types
         private const val H265_NAL_TYPE_MASK = 0x3F
-        private const val H265_NAL_IDR_W_RADL = 19  // IDR with RADL pictures
-        private const val H265_NAL_IDR_N_LP = 20    // IDR without leading pictures
-        private const val H265_NAL_VPS = 32         // Video Parameter Set
-        private const val H265_NAL_SPS = 33         // Sequence Parameter Set
-        private const val H265_NAL_PPS = 34         // Picture Parameter Set
+        private const val H265_NAL_IDR_W_RADL = 19
+        private const val H265_NAL_IDR_N_LP = 20
+        private const val H265_NAL_VPS = 32
+        private const val H265_NAL_SPS = 33
+        private const val H265_NAL_PPS = 34
     }
 
-    /**
-     * Recording state for external observation.
-     */
     sealed class RecordingState {
         object Idle : RecordingState()
         data class Recording(val file: File, val durationMs: Long) : RecordingState()
         data class Error(val message: String) : RecordingState()
     }
 
-    private var muxer: MediaMuxer? = null
+    // Passthrough muxer for compressed streams
+    private var passthroughMuxer: MediaMuxer? = null
     private var videoTrackIndex: Int = -1
     private var isMuxerStarted = false
 
-    // Use AtomicBoolean for proper thread-safe recording state management
-    // This prevents race conditions when checking/setting recording state
-    private val isRecordingFlag = AtomicBoolean(false)
+    // Encoder for uncompressed streams
+    private var uncompressedEncoder: VideoEncoder? = null
+    private var isEncoding = false
 
+    private val isRecordingFlag = AtomicBoolean(false)
     private var outputFile: File? = null
     private var startTimeUs: Long = -1
+
+    // Compressed stream properties
     private var isHevc = false
     private var videoWidth = 0
     private var videoHeight = 0
-
-    // CSD data storage
     private var sps: ByteArray? = null
     private var pps: ByteArray? = null
-    private var vps: ByteArray? = null  // Only for H.265
+    private var vps: ByteArray? = null
     private var csdExtracted = false
 
-    // Background write thread
-    private var writeThread: Thread? = null
-    private val writeQueue = LinkedBlockingQueue<FrameToWrite>(WRITE_QUEUE_SIZE)
+    // Uncompressed stream properties
+    private var frameFourCC: FourCC = FourCC.UNKNOWN
 
-    // Recording duration tracking
+    // Background processing
+    private var writeThread: Thread? = null
+    private val writeQueue = LinkedBlockingQueue<VideoFrameData>(WRITE_QUEUE_SIZE)
     private val recordingStartTime = AtomicLong(0)
 
-    /**
-     * Internal frame data for write queue.
-     */
-    private data class FrameToWrite(
-        val data: ByteBuffer,
-        val presentationTimeUs: Long,
-        val isKeyFrame: Boolean
-    )
 
-    /**
-     * Check if currently recording.
-     */
     fun isRecording(): Boolean = isRecordingFlag.get()
 
-    /**
-     * Get the current recording duration in milliseconds.
-     */
     fun getRecordingDurationMs(): Long {
         val startTime = recordingStartTime.get()
-        return if (startTime > 0) {
-            System.currentTimeMillis() - startTime
-        } else {
-            0
-        }
+        return if (startTime > 0) System.currentTimeMillis() - startTime else 0
     }
 
-    /**
-     * Get the current output file, if recording.
-     */
     fun getOutputFile(): File? = outputFile
 
     /**
-     * Start recording. The actual muxer will be initialized on first keyframe
-     * to ensure we have proper CSD data.
-     *
-     * @param width Video width
-     * @param height Video height
-     * @param isHevc True for H.265/HEVC, false for H.264/AVC
-     * @return The output file that will be created
+     * Start recording for compressed video streams (H.264/H.265).
      */
     fun startRecording(width: Int, height: Int, isHevc: Boolean): File {
-        // Use compareAndSet for atomic state transition
+        this.isEncoding = false
+        this.frameFourCC = if (isHevc) FourCC.HEVC else FourCC.H264
+        return commonStart(width, height)
+    }
+
+    /**
+     * Start recording for uncompressed video streams.
+     */
+    fun startRecording(width: Int, height: Int, fourCC: FourCC): File {
+        this.isEncoding = true
+        this.frameFourCC = fourCC
+        return commonStart(width, height)
+    }
+
+    private fun commonStart(width: Int, height: Int): File {
         if (!isRecordingFlag.compareAndSet(false, true)) {
             throw IllegalStateException("Already recording")
         }
 
-        // Create output directory if needed
         if (!outputDir.exists()) {
             outputDir.mkdirs()
         }
 
-        // Generate filename with timestamp
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
-            .format(Date())
-        val codec = if (isHevc) "H265" else "H264"
-        outputFile = File(outputDir, "NDI_${timestamp}_${codec}.mp4")
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val codec = if (isEncoding) "H264_from_${frameFourCC.name}" else if (isHevc) "H265" else "H264"
+        outputFile = File(outputDir, "NDI_${timestamp}_${width}x${height}_${codec}.mp4")
 
-        this.isHevc = isHevc
         this.videoWidth = width
         this.videoHeight = height
-        this.csdExtracted = false
-        this.sps = null
-        this.pps = null
-        this.vps = null
         this.startTimeUs = -1
-        this.videoTrackIndex = -1
-        this.isMuxerStarted = false
 
-        // isRecordingFlag already set to true via compareAndSet above
+        if (isEncoding) {
+            // Setup for encoding uncompressed frames
+            uncompressedEncoder = encoderFactory(width, height, BITRATE_1080P, outputFile!!)
+        } else {
+            // Setup for passthrough of compressed frames
+            this.videoTrackIndex = -1
+            this.isMuxerStarted = false
+            this.csdExtracted = false
+            this.sps = null
+            this.pps = null
+            this.vps = null
+        }
+
         recordingStartTime.set(System.currentTimeMillis())
-
-        // Start write thread
-        writeThread = Thread({
-            writeLoop()
-        }, "VideoRecorder-Write").apply { start() }
+        writeThread = Thread({ writeLoop() }, "VideoRecorder-Write").apply { start() }
 
         Log.i(TAG, "Recording started: ${outputFile?.absolutePath}")
         return outputFile!!
     }
 
-    /**
-     * Write a video frame. Must be called with compressed H.264/H.265 data.
-     *
-     * @param frame The video frame data from NDI
-     */
     fun writeFrame(frame: VideoFrameData) {
-        // Use atomic get for thread-safe check
         if (!isRecordingFlag.get()) return
 
-        // CRITICAL FIX: Create a defensive copy of the ByteBuffer
-        // The original frame.data may be read simultaneously by VideoDecoder,
-        // so we must NOT call rewind() or any position-modifying methods on it.
-        // Instead, duplicate the buffer (creates independent position/limit)
-        // and then copy the data.
-        val originalData = frame.data
-        val dataDuplicate = originalData.duplicate()
-        dataDuplicate.rewind()
+        // For uncompressed streams, the data will be processed on the write thread.
+        // For compressed streams, we copy the data to avoid issues with the buffer being reused.
+        val dataCopy = if (!isEncoding) {
+            val originalData = frame.data
+            val dataDuplicate = originalData.duplicate()
+            dataDuplicate.rewind()
+            val bytes = ByteArray(dataDuplicate.remaining())
+            dataDuplicate.get(bytes)
+            ByteBuffer.wrap(bytes)
+        } else {
+            frame.data // Pass original buffer, will be converted on write thread
+        }
 
-        // Copy data for async processing
-        val dataCopy = ByteArray(dataDuplicate.remaining())
-        dataDuplicate.get(dataCopy)
+        val frameToWrite = frame.copy(data = dataCopy)
 
-        val timestampUs = frame.timestamp
-
-        // Queue frame for writing
-        val frameToWrite = FrameToWrite(
-            data = ByteBuffer.wrap(dataCopy),
-            presentationTimeUs = timestampUs,
-            isKeyFrame = false  // Will be determined in write loop
-        )
-
-        if (!writeQueue.offer(frameToWrite)) {
+        if (!writeQueue.offer(frameToWrite, 200, TimeUnit.MILLISECONDS)) {
             Log.w(TAG, "Write queue full, dropping frame")
         }
     }
 
-    /**
-     * Background write loop.
-     */
     private fun writeLoop() {
-        Log.d(TAG, "Write loop started")
+        Log.d(TAG, "Write loop started. Mode: ${if (isEncoding) "Encoding" else "Passthrough"}")
 
-        // Use atomic get for thread-safe state checking
-        // Continue processing while recording OR while queue has pending frames
-        // This ensures no frames are lost at the stop boundary
         while (isRecordingFlag.get() || writeQueue.isNotEmpty()) {
             try {
                 val frame = writeQueue.poll(100, TimeUnit.MILLISECONDS) ?: continue
-                processFrame(frame.data.array(), frame.presentationTimeUs)
+                if (startTimeUs < 0) {
+                    startTimeUs = frame.timestamp
+                }
+                val presentationTimeUs = frame.timestamp - startTimeUs
+
+                if (isEncoding) {
+                    processFrameForEncoding(frame, presentationTimeUs)
+                } else {
+                    processFrameForPassthrough(frame, presentationTimeUs)
+                }
             } catch (e: InterruptedException) {
-                // Only log warning if we're still supposed to be recording
-                if (isRecordingFlag.get()) {
-                    Log.w(TAG, "Write loop interrupted while still recording")
-                }
-                // Don't break immediately - drain remaining frames from queue
-                while (writeQueue.isNotEmpty()) {
-                    try {
-                        val remainingFrame = writeQueue.poll() ?: break
-                        processFrame(remainingFrame.data.array(), remainingFrame.presentationTimeUs)
-                    } catch (e2: Exception) {
-                        Log.e(TAG, "Error processing remaining frame", e2)
-                    }
-                }
+                Thread.currentThread().interrupt()
                 break
             } catch (e: Exception) {
                 Log.e(TAG, "Error in write loop", e)
             }
         }
-
-        Log.d(TAG, "Write loop ended")
+        Log.d(TAG, "Write loop finished.")
     }
 
-    /**
-     * Process and write a frame.
-     */
-    private fun processFrame(data: ByteArray, timestampUs: Long) {
-        // Parse NAL units to extract CSD and detect keyframes
-        val nalUnits = parseNalUnits(data)
+    private fun processFrameForEncoding(frame: VideoFrameData, presentationTimeUs: Long) {
+        val nv12Bytes = ColorSpaceConverter.convert(
+            frame.data,
+            frameFourCC,
+            videoWidth,
+            videoHeight,
+            frame.lineStrideBytes
+        )
 
+        if (nv12Bytes != null) {
+            try {
+                uncompressedEncoder?.encodeFrame(nv12Bytes, presentationTimeUs)
+            } catch (e: Exception) {
+                Log.e(TAG, "Encoding failed for frame at $presentationTimeUs", e)
+            }
+        } else {
+            Log.w(TAG, "Color conversion failed for frame. FourCC: $frameFourCC")
+        }
+    }
+
+    private fun processFrameForPassthrough(frame: VideoFrameData, presentationTimeUs: Long) {
+        val data = ByteArray(frame.data.remaining())
+        frame.data.get(data)
+
+        val nalUnits = parseNalUnits(data)
         if (nalUnits.isEmpty()) {
-            Log.w(TAG, "No NAL units found in frame")
+            Log.w(TAG, "No NAL units found in passthrough frame")
             return
         }
 
-        // Extract CSD if not yet done
         if (!csdExtracted) {
             extractCsd(nalUnits)
-
-            // If we have CSD, initialize muxer
             if (hasCsd()) {
-                initializeMuxer()
+                initializePassthroughMuxer()
                 csdExtracted = true
             } else {
-                // Skip frames until we get CSD
-                Log.d(TAG, "Waiting for CSD data...")
+                Log.d(TAG, "Waiting for CSD data for passthrough...")
                 return
             }
         }
 
-        if (!isMuxerStarted || muxer == null) {
-            return
-        }
+        if (!isMuxerStarted || passthroughMuxer == null) return
 
-        // Calculate relative timestamp
-        if (startTimeUs < 0) {
-            startTimeUs = timestampUs
-        }
-        val presentationTimeUs = timestampUs - startTimeUs
-
-        // Detect if this is a keyframe
         val isKeyFrame = containsKeyFrame(nalUnits)
-
-        // Write to muxer
-        val buffer = ByteBuffer.wrap(data)
         val bufferInfo = MediaCodec.BufferInfo().apply {
             offset = 0
             size = data.size
@@ -287,51 +259,33 @@ class VideoRecorder(private val outputDir: File) {
         }
 
         try {
-            muxer?.writeSampleData(videoTrackIndex, buffer, bufferInfo)
+            passthroughMuxer?.writeSampleData(videoTrackIndex, ByteBuffer.wrap(data), bufferInfo)
         } catch (e: Exception) {
-            Log.e(TAG, "Error writing sample data", e)
+            Log.e(TAG, "Error writing passthrough sample data", e)
         }
     }
 
-    /**
-     * Parse NAL units from Annex-B byte stream.
-     * Returns list of pairs: (NAL type, NAL data including start code)
-     */
     private fun parseNalUnits(data: ByteArray): List<Pair<Int, ByteArray>> {
         val nalUnits = mutableListOf<Pair<Int, ByteArray>>()
         var pos = 0
-
-        // CRITICAL FIX: Use data.size - 3 to ensure we can read at least a 3-byte start code
-        // The original data.size - 4 was an off-by-one error that could miss the last NAL unit
         while (pos < data.size - 3) {
-            // Find start code (0x00000001 or 0x000001)
             val startCodePos = findStartCode(data, pos)
             if (startCodePos < 0) break
 
-            // CRITICAL FIX: Proper 4-byte start code detection
-            // 1. Ensure startCodePos > 0 (not >= 1, but > 0) to safely access startCodePos - 1
-            // 2. Use 'and 0xFF' to handle signed byte comparison correctly (byte 0x00 == 0)
-            // The 4-byte start code is 0x00 00 00 01, so we check if the byte before 0x00 00 01 is also 0x00
             val is4ByteStartCode = startCodePos > 0 && (data[startCodePos - 1].toInt() and 0xFF) == 0
-            val startCodeLen = if (is4ByteStartCode) 4 else 3
             val nalStart = if (is4ByteStartCode) startCodePos - 1 else startCodePos
-            val nalDataStart = startCodePos + 3  // After 0x000001
+            val nalDataStart = startCodePos + 3
 
-            // Ensure we have at least one byte of NAL data
             if (nalDataStart >= data.size) break
 
-            // Find next start code to determine NAL end
             var nalEnd = data.size
             for (i in nalDataStart until data.size - 2) {
-                if ((data[i].toInt() and 0xFF) == 0 && (data[i + 1].toInt() and 0xFF) == 0 &&
-                    ((data[i + 2].toInt() and 0xFF) == 1 ||
-                     (i + 3 < data.size && (data[i + 2].toInt() and 0xFF) == 0 && (data[i + 3].toInt() and 0xFF) == 1))) {
+                if (data[i].toInt() == 0 && data[i + 1].toInt() == 0 && (data[i + 2].toInt() == 1 || (i + 3 < data.size && data[i + 2].toInt() == 0 && data[i + 3].toInt() == 1))) {
                     nalEnd = i
                     break
                 }
             }
 
-            // Get NAL type
             val nalType = if (isHevc) {
                 (data[nalDataStart].toInt() shr 1) and H265_NAL_TYPE_MASK
             } else {
@@ -340,216 +294,130 @@ class VideoRecorder(private val outputDir: File) {
 
             val nalData = data.copyOfRange(nalStart, nalEnd)
             nalUnits.add(Pair(nalType, nalData))
-
             pos = nalEnd
         }
-
         return nalUnits
     }
 
-    /**
-     * Find the position of 0x000001 start code.
-     * Uses 'and 0xFF' for proper unsigned byte comparison.
-     */
     private fun findStartCode(data: ByteArray, startPos: Int): Int {
         for (i in startPos until data.size - 2) {
-            if ((data[i].toInt() and 0xFF) == 0 &&
-                (data[i + 1].toInt() and 0xFF) == 0 &&
-                (data[i + 2].toInt() and 0xFF) == 1) {
+            if (data[i].toInt() == 0 && data[i + 1].toInt() == 0 && data[i + 2].toInt() == 1) {
                 return i
             }
         }
         return -1
     }
 
-    /**
-     * Extract CSD (SPS/PPS/VPS) from NAL units.
-     */
     private fun extractCsd(nalUnits: List<Pair<Int, ByteArray>>) {
         for ((nalType, nalData) in nalUnits) {
             if (isHevc) {
                 when (nalType) {
-                    H265_NAL_VPS -> {
-                        if (vps == null) {
-                            vps = nalData
-                            Log.d(TAG, "Extracted VPS: ${nalData.size} bytes")
-                        }
-                    }
-                    H265_NAL_SPS -> {
-                        if (sps == null) {
-                            sps = nalData
-                            Log.d(TAG, "Extracted SPS: ${nalData.size} bytes")
-                        }
-                    }
-                    H265_NAL_PPS -> {
-                        if (pps == null) {
-                            pps = nalData
-                            Log.d(TAG, "Extracted PPS: ${nalData.size} bytes")
-                        }
-                    }
+                    H265_NAL_VPS -> if (vps == null) vps = nalData
+                    H265_NAL_SPS -> if (sps == null) sps = nalData
+                    H265_NAL_PPS -> if (pps == null) pps = nalData
                 }
             } else {
                 when (nalType) {
-                    H264_NAL_SPS -> {
-                        if (sps == null) {
-                            sps = nalData
-                            Log.d(TAG, "Extracted SPS: ${nalData.size} bytes")
-                        }
-                    }
-                    H264_NAL_PPS -> {
-                        if (pps == null) {
-                            pps = nalData
-                            Log.d(TAG, "Extracted PPS: ${nalData.size} bytes")
-                        }
-                    }
+                    H264_NAL_SPS -> if (sps == null) sps = nalData
+                    H264_NAL_PPS -> if (pps == null) pps = nalData
                 }
             }
         }
     }
 
-    /**
-     * Check if we have all required CSD data.
-     */
-    private fun hasCsd(): Boolean {
-        return if (isHevc) {
-            vps != null && sps != null && pps != null
-        } else {
-            sps != null && pps != null
-        }
-    }
+    private fun hasCsd(): Boolean = if (isHevc) vps != null && sps != null && pps != null else sps != null && pps != null
 
-    /**
-     * Check if NAL units contain a keyframe.
-     */
     private fun containsKeyFrame(nalUnits: List<Pair<Int, ByteArray>>): Boolean {
-        for ((nalType, _) in nalUnits) {
+        return nalUnits.any { (nalType, _) ->
             if (isHevc) {
-                if (nalType == H265_NAL_IDR_W_RADL || nalType == H265_NAL_IDR_N_LP) {
-                    return true
-                }
+                nalType == H265_NAL_IDR_W_RADL || nalType == H265_NAL_IDR_N_LP
             } else {
-                if (nalType == H264_NAL_IDR) {
-                    return true
-                }
+                nalType == H264_NAL_IDR
             }
         }
-        return false
     }
 
-    /**
-     * Initialize MediaMuxer with CSD data.
-     */
-    private fun initializeMuxer() {
-        val file = outputFile ?: throw IllegalStateException("Output file not set")
-
+    private fun initializePassthroughMuxer() {
+        val file = outputFile ?: throw IllegalStateException("Output file not set for passthrough")
         try {
-            muxer = MediaMuxer(
-                file.absolutePath,
-                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
-            )
-
-            // Create MediaFormat with CSD
-            val mimeType = if (isHevc) {
-                MediaFormat.MIMETYPE_VIDEO_HEVC
-            } else {
-                MediaFormat.MIMETYPE_VIDEO_AVC
-            }
-
-            val format = MediaFormat.createVideoFormat(mimeType, videoWidth, videoHeight)
+            passthroughMuxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val mime = if (isHevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
+            val format = MediaFormat.createVideoFormat(mime, videoWidth, videoHeight)
 
             if (isHevc) {
-                // For H.265, csd-0 contains VPS + SPS + PPS concatenated
-                val csd0 = ByteBuffer.allocate(
-                    (vps?.size ?: 0) + (sps?.size ?: 0) + (pps?.size ?: 0)
-                )
-                vps?.let { csd0.put(it) }
-                sps?.let { csd0.put(it) }
-                pps?.let { csd0.put(it) }
-                csd0.flip()
-                format.setByteBuffer("csd-0", csd0)
-                Log.d(TAG, "Set H.265 csd-0: ${csd0.remaining()} bytes")
+                val csd = ByteBuffer.allocate((vps?.size ?: 0) + (sps?.size ?: 0) + (pps?.size ?: 0))
+                vps?.let { csd.put(it) }
+                sps?.let { csd.put(it) }
+                pps?.let { csd.put(it) }
+                csd.flip()
+                format.setByteBuffer("csd-0", csd)
             } else {
-                // For H.264, csd-0 is SPS, csd-1 is PPS
-                sps?.let {
-                    format.setByteBuffer("csd-0", ByteBuffer.wrap(it))
-                    Log.d(TAG, "Set H.264 csd-0 (SPS): ${it.size} bytes")
-                }
-                pps?.let {
-                    format.setByteBuffer("csd-1", ByteBuffer.wrap(it))
-                    Log.d(TAG, "Set H.264 csd-1 (PPS): ${it.size} bytes")
-                }
+                sps?.let { format.setByteBuffer("csd-0", ByteBuffer.wrap(it)) }
+                pps?.let { format.setByteBuffer("csd-1", ByteBuffer.wrap(it)) }
             }
 
-            videoTrackIndex = muxer!!.addTrack(format)
-            muxer!!.start()
+            videoTrackIndex = passthroughMuxer!!.addTrack(format)
+            passthroughMuxer!!.start()
             isMuxerStarted = true
-
-            Log.i(TAG, "MediaMuxer initialized: $mimeType ${videoWidth}x${videoHeight}")
-
+            Log.i(TAG, "Passthrough MediaMuxer initialized: $mime ${videoWidth}x${videoHeight}")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize MediaMuxer", e)
+            Log.e(TAG, "Failed to initialize passthrough MediaMuxer", e)
             cleanup()
             throw e
         }
     }
 
-    /**
-     * Stop recording and finalize the MP4 file.
-     */
     fun stopRecording(): File? {
-        // Use compareAndSet for atomic state transition - prevents double-stop
-        if (!isRecordingFlag.compareAndSet(true, false)) {
-            return null
-        }
-
+        if (!isRecordingFlag.compareAndSet(true, false)) return null
         Log.d(TAG, "Stopping recording...")
 
-        // Wait for write thread to finish
-        writeThread?.interrupt()
-        try {
-            writeThread?.join(3000)
-        } catch (e: InterruptedException) {
-            Log.w(TAG, "Interrupted while waiting for write thread")
+        val thread = writeThread
+        if (thread != null) {
+            try {
+                // Prefer a graceful drain of the queue; fallback to interrupt if the thread hangs.
+                thread.join(3000)
+                if (thread.isAlive) {
+                    Log.w(TAG, "Write thread did not finish in time; interrupting")
+                    thread.interrupt()
+                    thread.join(1000)
+                }
+            } catch (e: InterruptedException) {
+                Log.w(TAG, "Interrupted while waiting for write thread")
+                Thread.currentThread().interrupt()
+            }
         }
         writeThread = null
 
         val file = outputFile
-        val duration = getRecordingDurationMs()
-
         cleanup()
-
-        Log.i(TAG, "Recording stopped: ${file?.absolutePath}, duration: ${duration}ms")
+        Log.i(TAG, "Recording stopped: ${file?.absolutePath}")
         return file
     }
 
-    /**
-     * Clean up resources.
-     */
     private fun cleanup() {
-        try {
-            if (isMuxerStarted) {
-                muxer?.stop()
+        if (isEncoding) {
+            uncompressedEncoder?.release()
+            uncompressedEncoder = null
+        } else {
+            try {
+                if (isMuxerStarted) passthroughMuxer?.stop()
+                passthroughMuxer?.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during passthrough muxer cleanup", e)
             }
-            muxer?.release()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during cleanup", e)
+            passthroughMuxer = null
+            isMuxerStarted = false
         }
 
-        muxer = null
-        isMuxerStarted = false
         videoTrackIndex = -1
         recordingStartTime.set(0)
         writeQueue.clear()
-
         sps = null
         pps = null
         vps = null
         csdExtracted = false
     }
 
-    /**
-     * Release all resources. Call when the recorder is no longer needed.
-     */
     fun release() {
         if (isRecordingFlag.get()) {
             stopRecording()

@@ -18,10 +18,10 @@ import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.commit
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -30,7 +30,10 @@ import com.example.ndireceiver.R
 import com.example.ndireceiver.ndi.ConnectionState
 import com.example.ndireceiver.ndi.NdiSource
 import com.example.ndireceiver.ndi.NdiSourceRepository
+import com.example.ndireceiver.ui.recordings.RecordingsFragment
+import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -80,6 +83,9 @@ class PlayerFragment : Fragment() {
 
     private var sourceToBind: NdiSource? = null
     private var errorDialog: AlertDialog? = null
+    
+    // Track the last shown recording file to prevent duplicate notifications
+    private var lastNotifiedRecordingFile: File? = null
 
     private val hideControlsRunnable = Runnable {
         viewModel.hideControls()
@@ -399,8 +405,7 @@ class PlayerFragment : Fragment() {
             layoutParams.height = (parentWidth / videoAspect).roundToInt()
         } else {
             // Video is taller - fit to height, add pillarbox left/right
-            // Add +1 pixel to width to prevent edge clipping
-            layoutParams.width = (parentHeight * videoAspect).roundToInt() + 1
+            layoutParams.width = (parentHeight * videoAspect).roundToInt()
             layoutParams.height = parentHeight
         }
 
@@ -449,19 +454,20 @@ class PlayerFragment : Fragment() {
                 recordingIndicator.text = formatRecordingDuration(recordingState.durationMs)
                 btnRecord.text = getString(R.string.stop_recording)
                 btnRecord.isEnabled = true
+                // Reset notification tracking when recording starts
+                lastNotifiedRecordingFile = null
             }
             is RecordingState.Stopped -> {
                 recordingIndicator.isVisible = false
                 btnRecord.text = getString(R.string.start_recording)
                 btnRecord.isEnabled = true
 
-                // Show toast with saved file info
+                // Show snackbar with action to view recordings - only once per file
                 recordingState.file?.let { file ->
-                    Toast.makeText(
-                        requireContext(),
-                        "Recording saved: ${file.name}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    if (lastNotifiedRecordingFile != file) {
+                        lastNotifiedRecordingFile = file
+                        showRecordingSavedSnackbar(file)
+                    }
                 }
             }
             is RecordingState.Error -> {
@@ -469,12 +475,40 @@ class PlayerFragment : Fragment() {
                 btnRecord.text = getString(R.string.start_recording)
                 btnRecord.isEnabled = true
 
-                Toast.makeText(
-                    requireContext(),
+                Snackbar.make(
+                    requireView(),
                     "Recording error: ${recordingState.message}",
-                    Toast.LENGTH_LONG
+                    Snackbar.LENGTH_LONG
                 ).show()
             }
+        }
+    }
+    
+    /**
+     * Show a snackbar with recording saved message and action to view recordings.
+     */
+    private fun showRecordingSavedSnackbar(file: File) {
+        val snackbar = Snackbar.make(
+            requireView(),
+            getString(R.string.recording_saved, file.name),
+            Snackbar.LENGTH_LONG
+        ).setAction(R.string.view_recordings) {
+            // Navigate to recordings fragment
+            navigateToRecordings()
+        }
+        snackbar.show()
+    }
+    
+    /**
+     * Navigate to the recordings list.
+     */
+    private fun navigateToRecordings() {
+        // Disconnect first
+        viewModel.disconnect()
+        
+        parentFragmentManager.commit {
+            replace(R.id.fragment_container, RecordingsFragment.newInstance())
+            addToBackStack(null)
         }
     }
 

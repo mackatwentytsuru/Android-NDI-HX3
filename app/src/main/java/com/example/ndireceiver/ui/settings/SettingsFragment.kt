@@ -4,9 +4,12 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -15,6 +18,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.ndireceiver.R
+import com.example.ndireceiver.data.AppLanguage
+import com.example.ndireceiver.util.LocaleHelper
 import com.google.android.material.switchmaterial.SwitchMaterial
 import kotlinx.coroutines.launch
 
@@ -39,12 +44,20 @@ class SettingsFragment : Fragment() {
     private lateinit var lastSourceContainer: LinearLayout
     private lateinit var lastSourceName: TextView
     private lateinit var btnClearLastSource: Button
+    private lateinit var spinnerLanguage: Spinner
     private lateinit var storagePath: TextView
     private lateinit var storageInfo: TextView
     private lateinit var versionInfo: TextView
 
-    // Flag to prevent switch listener triggering during initialization
+    // Flag to prevent switch/spinner listener triggering during initialization
     private var isInitializing = true
+    
+    // Language options
+    private val languageOptions = listOf(
+        AppLanguage.SYSTEM,
+        AppLanguage.ENGLISH,
+        AppLanguage.JAPANESE
+    )
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -58,6 +71,7 @@ class SettingsFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         initializeViews(view)
+        setupLanguageSpinner()
         setupListeners()
         observeUiState()
 
@@ -73,9 +87,41 @@ class SettingsFragment : Fragment() {
         lastSourceContainer = view.findViewById(R.id.last_source_container)
         lastSourceName = view.findViewById(R.id.last_source_name)
         btnClearLastSource = view.findViewById(R.id.btn_clear_last_source)
+        spinnerLanguage = view.findViewById(R.id.spinner_language)
         storagePath = view.findViewById(R.id.storage_path)
         storageInfo = view.findViewById(R.id.storage_info)
         versionInfo = view.findViewById(R.id.version_info)
+    }
+
+    private fun setupLanguageSpinner() {
+        // Create display names for language options
+        val displayNames = languageOptions.map { language ->
+            LocaleHelper.getDisplayName(requireContext(), language)
+        }
+
+        val adapter = ArrayAdapter(
+            requireContext(),
+            android.R.layout.simple_spinner_item,
+            displayNames
+        ).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+
+        spinnerLanguage.adapter = adapter
+
+        spinnerLanguage.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (!isInitializing) {
+                    val selectedLanguage = languageOptions[position]
+                    viewModel.setLanguage(selectedLanguage)
+                    LocaleHelper.applyLanguage(selectedLanguage)
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {
+                // Do nothing
+            }
+        }
     }
 
     private fun setupListeners() {
@@ -129,6 +175,12 @@ class SettingsFragment : Fragment() {
         lastSourceContainer.isVisible = hasLastSource
         if (hasLastSource) {
             lastSourceName.text = state.settings.lastConnectedSourceName
+        }
+
+        // Update language spinner
+        val languageIndex = languageOptions.indexOf(state.settings.language)
+        if (languageIndex >= 0) {
+            spinnerLanguage.setSelection(languageIndex)
         }
 
         // Update storage info

@@ -60,4 +60,33 @@
     <string name="auto_reconnecting_default">Auto-reconnecting...</string>
     <string name="connection_lost">Connection lost</string>
     <string name="connection_failed">Failed to connect to NDI source</string>
+
+    <!-- Recording Management -->
+    <string name="share">Share</string>
+    <string name="rename">Rename</string>
+    <string name="rename_recording">Rename Recording</string>
+    <string name="rename_hint">Enter new name</string>
+    <string name="rename_error_empty">Name cannot be empty</string>
+    <string name="rename_error_duplicate">A recording with this name already exists</string>
+    <string name="rename_success">Renamed to: %1$s</string>
+    <string name="batch_delete">Delete Selected</string>
+    <string name="batch_delete_confirm">Delete %1$d recordings?</string>
+    <string name="batch_delete_message">Are you sure you want to delete %1$d recordings? This action cannot be undone.</string>
+    <string name="batch_deleted">Deleted %1$d recordings</string>
+    <string name="select_all">Select All</string>
+    <string name="select_multiple">Select Multiple</string>
+    <string name="cancel_selection">Cancel</string>
+    <string name="selected_count">%1$d selected</string>
+    
+    <!-- Recording notifications -->
+    <string name="recording_saved">Recording saved: %1$s</string>
+    <string name="view_recordings">View Recordings</string>
+    
+    <!-- Language settings -->
+    <string name="settings_section_language">Language</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_desc">Select app display language</string>
+    <string name="settings_language_system">System Default</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_japanese">日本語</string>
 </resources>

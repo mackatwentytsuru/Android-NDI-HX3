@@ -9,12 +9,22 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Data class representing app settings.
  */
+/**
+ * Language setting values.
+ */
+enum class AppLanguage(val code: String) {
+    SYSTEM("system"),
+    ENGLISH("en"),
+    JAPANESE("ja")
+}
+
 data class AppSettings(
     val autoReconnect: Boolean = true,
     val screenAlwaysOn: Boolean = true,
     val showOsd: Boolean = true,
     val lastConnectedSourceName: String? = null,
-    val lastConnectedSourceUrl: String? = null
+    val lastConnectedSourceUrl: String? = null,
+    val language: AppLanguage = AppLanguage.SYSTEM
 )
 
 /**
@@ -32,6 +42,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_SHOW_OSD = "show_osd"
         private const val KEY_LAST_SOURCE_NAME = "last_source_name"
         private const val KEY_LAST_SOURCE_URL = "last_source_url"
+        private const val KEY_LANGUAGE = "language"
 
         // Default values
         private const val DEFAULT_AUTO_RECONNECT = true
@@ -67,7 +78,10 @@ class SettingsRepository(context: Context) {
             screenAlwaysOn = prefs.getBoolean(KEY_SCREEN_ALWAYS_ON, DEFAULT_SCREEN_ALWAYS_ON),
             showOsd = prefs.getBoolean(KEY_SHOW_OSD, DEFAULT_SHOW_OSD),
             lastConnectedSourceName = prefs.getString(KEY_LAST_SOURCE_NAME, null),
-            lastConnectedSourceUrl = prefs.getString(KEY_LAST_SOURCE_URL, null)
+            lastConnectedSourceUrl = prefs.getString(KEY_LAST_SOURCE_URL, null),
+            language = AppLanguage.entries.find { 
+                it.code == prefs.getString(KEY_LANGUAGE, AppLanguage.SYSTEM.code) 
+            } ?: AppLanguage.SYSTEM
         )
     }
 
@@ -119,6 +133,20 @@ class SettingsRepository(context: Context) {
     fun clearLastConnectedSource() {
         setLastConnectedSource(null, null)
     }
+
+    /**
+     * Set language preference.
+     * Uses commit() for synchronous write to ensure thread-safety with StateFlow update.
+     */
+    fun setLanguage(language: AppLanguage) {
+        prefs.edit().putString(KEY_LANGUAGE, language.code).commit()
+        _settings.value = _settings.value.copy(language = language)
+    }
+
+    /**
+     * Get current language setting.
+     */
+    fun getLanguage(): AppLanguage = _settings.value.language
 
     /**
      * Check if auto-reconnect is enabled.

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NDI レシーバー</string>
+    <string name="no_sources_found">NDIソースが見つかりません</string>
+    <string name="searching_sources">NDIソースを検索中...</string>
+    <string name="refresh">更新</string>
+    <string name="recordings">録画</string>
+    <string name="settings">設定</string>
+    <string name="connect">接続</string>
+    <string name="disconnect">切断</string>
+    <string name="connecting">接続中...</string>
+    <string name="start_recording">録画開始</string>
+    <string name="stop_recording">録画停止</string>
+    <string name="back">戻る</string>
+    <string name="rec">REC</string>
+    <string name="rec_indicator">REC</string>
+    <string name="rec_indicator_default">REC 00:00:00</string>
+    <string name="retry">再試行</string>
+    <string name="connection_error">接続エラー</string>
+    <string name="ndi_trademark">NDIはVizrt NDI ABの登録商標です。</string>
+
+    <!-- Phase 3: Recordings and Playback -->
+    <string name="no_recordings">録画なし</string>
+    <string name="no_recordings_hint">録画したビデオはここに表示されます</string>
+    <string name="video_thumbnail">ビデオサムネイル</string>
+    <string name="play">再生</string>
+    <string name="delete">削除</string>
+    <string name="cancel">キャンセル</string>
+    <string name="delete_recording_title">録画を削除しますか？</string>
+    <string name="delete_recording_message">%1$s を削除しますか？この操作は取り消せません。</string>
+    <string name="recording_deleted">削除しました: %1$s</string>
+    <string name="playback_error">再生エラー</string>
+    <string name="play_pause">再生/一時停止</string>
+    <string name="rewind">10秒戻す</string>
+    <string name="forward">10秒進む</string>
+
+    <!-- Phase 4: Settings -->
+    <string name="settings_section_connection">接続</string>
+    <string name="settings_section_display">表示</string>
+    <string name="settings_section_storage">ストレージ</string>
+    <string name="settings_section_about">アプリについて</string>
+    <string name="settings_section_language">言語</string>
+
+    <string name="settings_auto_reconnect">自動再接続</string>
+    <string name="settings_auto_reconnect_desc">接続が切れた時に最後に接続したNDIソースに自動的に再接続</string>
+    <string name="settings_last_source">最後に接続したソース</string>
+    <string name="settings_clear_last_source">クリア</string>
+
+    <string name="settings_screen_always_on">画面を常にオン</string>
+    <string name="settings_screen_always_on_desc">再生中に画面がオフになるのを防止</string>
+    <string name="settings_show_osd">OSDを表示</string>
+    <string name="settings_show_osd_desc">ビデオ情報オーバーレイを表示（解像度、fps、ビットレート）</string>
+
+    <string name="settings_storage_location">保存場所</string>
+    <string name="settings_storage_info">ストレージ使用量</string>
+    <string name="settings_version">アプリバージョン</string>
+
+    <string name="settings_language">言語</string>
+    <string name="settings_language_desc">アプリの表示言語を選択</string>
+    <string name="settings_language_system">システム設定に従う</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_japanese">日本語</string>
+
+    <!-- Phase 4: OSD and Error Handling -->
+    <string name="toggle_osd">OSD切替</string>
+    <string name="auto_reconnecting">自動再接続中... (試行%1$d回目)</string>
+    <string name="auto_reconnecting_default">自動再接続中...</string>
+    <string name="connection_lost">接続が切れました</string>
+    <string name="connection_failed">NDIソースへの接続に失敗しました</string>
+
+    <!-- Recording Management -->
+    <string name="share">共有</string>
+    <string name="rename">名前変更</string>
+    <string name="rename_recording">録画の名前変更</string>
+    <string name="rename_hint">新しい名前を入力</string>
+    <string name="rename_error_empty">名前を入力してください</string>
+    <string name="rename_error_duplicate">この名前の録画は既に存在します</string>
+    <string name="rename_success">名前を変更しました: %1$s</string>
+    <string name="batch_delete">選択を削除</string>
+    <string name="batch_delete_confirm">%1$d件の録画を削除しますか？</string>
+    <string name="batch_delete_message">%1$d件の録画を削除しますか？この操作は取り消せません。</string>
+    <string name="batch_deleted">%1$d件の録画を削除しました</string>
+    <string name="select_all">すべて選択</string>
+    <string name="select_multiple">複数選択</string>
+    <string name="cancel_selection">キャンセル</string>
+    <string name="selected_count">%1$d件選択中</string>
+    
+    <!-- Recording notifications -->
+    <string name="recording_saved">録画を保存しました: %1$s</string>
+    <string name="view_recordings">録画一覧</string>
+</resources>

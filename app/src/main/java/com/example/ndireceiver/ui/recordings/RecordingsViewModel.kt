@@ -20,7 +20,10 @@ data class RecordingsUiState(
     val error: String? = null,
     val totalSize: Long = 0,
     val deleteConfirmation: Recording? = null,
-    val deletedRecording: Recording? = null
+    val deletedRecording: Recording? = null,
+    val batchDeleteConfirmation: List<Recording>? = null,
+    val renameDialogRecording: Recording? = null,
+    val selectionMode: Boolean = false
 ) {
     /**
      * Get formatted storage info text.
@@ -45,9 +48,10 @@ data class RecordingsUiState(
  *
  * Handles loading, displaying, and deleting recorded video files.
  */
-class RecordingsViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val repository = RecordingRepository(application.applicationContext)
+class RecordingsViewModel @JvmOverloads constructor(
+    application: Application,
+    private val repository: RecordingRepository = RecordingRepository(application.applicationContext)
+) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(RecordingsUiState())
     val uiState: StateFlow<RecordingsUiState> = _uiState.asStateFlow()
@@ -157,5 +161,109 @@ class RecordingsViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun clearDeletedNotification() {
         _uiState.value = _uiState.value.copy(deletedRecording = null)
+    }
+
+    /**
+     * Request rename dialog for a recording.
+     */
+    fun requestRename(recording: Recording) {
+        _uiState.value = _uiState.value.copy(renameDialogRecording = recording)
+    }
+
+    /**
+     * Cancel rename dialog.
+     */
+    fun cancelRename() {
+        _uiState.value = _uiState.value.copy(renameDialogRecording = null)
+    }
+
+    /**
+     * Rename a recording.
+     */
+    fun renameRecording(recording: Recording, newName: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(renameDialogRecording = null)
+
+            try {
+                val result = repository.renameRecording(recording, newName)
+                result.fold(
+                    onSuccess = {
+                        // Reload the list to show the renamed recording
+                        loadRecordings()
+                    },
+                    onFailure = { exception ->
+                        _uiState.value = _uiState.value.copy(
+                            error = exception.message ?: "Failed to rename recording"
+                        )
+                    }
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Error renaming recording: ${e.message}"
+                )
+            }
+        }
+    }
+
+    /**
+     * Enable or disable selection mode.
+     */
+    fun setSelectionMode(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(selectionMode = enabled)
+    }
+
+    /**
+     * Request confirmation to batch delete recordings.
+     */
+    fun requestBatchDelete(recordings: List<Recording>) {
+        if (recordings.isEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                error = "No recordings selected"
+            )
+            return
+        }
+        _uiState.value = _uiState.value.copy(batchDeleteConfirmation = recordings)
+    }
+
+    /**
+     * Cancel batch deletion confirmation.
+     */
+    fun cancelBatchDelete() {
+        _uiState.value = _uiState.value.copy(batchDeleteConfirmation = null)
+    }
+
+    /**
+     * Confirm and perform batch deletion of recordings.
+     */
+    fun confirmBatchDelete() {
+        val recordings = _uiState.value.batchDeleteConfirmation ?: return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                batchDeleteConfirmation = null,
+                selectionMode = false
+            )
+
+            try {
+                val deletedCount = repository.deleteRecordings(recordings)
+
+                if (deletedCount == recordings.size) {
+                    _uiState.value = _uiState.value.copy(
+                        error = "Deleted $deletedCount recording(s)"
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        error = "Deleted $deletedCount of ${recordings.size} recording(s)"
+                    )
+                }
+
+                // Reload the list
+                loadRecordings()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Error deleting recordings: ${e.message}"
+                )
+            }
+        }
     }
 }

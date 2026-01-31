@@ -5,6 +5,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.util.Log
 import android.view.Surface
+import com.example.ndireceiver.ndi.FourCC
 import com.example.ndireceiver.ndi.NdiNative
 import com.example.ndireceiver.ndi.VideoFrameData
 import java.nio.ByteBuffer
@@ -80,13 +81,13 @@ class UncompressedVideoRenderer {
 
             // All copy/convert functions output RGBA for Bitmap.Config.ARGB_8888
             val ok = when (frame.fourCC) {
-                NdiNative.FourCC.BGRA -> copyBgraToRgba(frame, pixels, forceOpaque = false)
-                NdiNative.FourCC.BGRX -> copyBgraToRgba(frame, pixels, forceOpaque = true)
-                NdiNative.FourCC.RGBA -> copyRgba(frame, pixels, forceOpaque = false)
-                NdiNative.FourCC.RGBX -> copyRgba(frame, pixels, forceOpaque = true)
-                NdiNative.FourCC.UYVY -> convertUyvyToRgba(frame, pixels)
+                FourCC.BGRA -> copyBgraToRgba(frame, pixels, forceOpaque = false)
+                FourCC.BGRX -> copyBgraToRgba(frame, pixels, forceOpaque = true)
+                FourCC.RGBA -> copyRgba(frame, pixels, forceOpaque = false)
+                FourCC.RGBX -> copyRgba(frame, pixels, forceOpaque = true)
+                FourCC.UYVY -> convertUyvyToRgba(frame, pixels)
                 else -> {
-                    Log.w(TAG, "Unsupported FourCC for uncompressed render: ${String.format("0x%08X", frame.fourCC)}")
+                    Log.w(TAG, "Unsupported FourCC for uncompressed render: ${frame.fourCC.name}")
                     false
                 }
             }

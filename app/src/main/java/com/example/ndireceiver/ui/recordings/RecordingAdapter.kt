@@ -5,6 +5,7 @@ import android.media.MediaMetadataRetriever
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
@@ -27,22 +28,74 @@ import java.io.File
  * RecyclerView adapter for displaying recordings with thumbnails.
  *
  * Uses Glide for efficient thumbnail caching and loading.
+ * Supports batch selection and sharing.
  */
 class RecordingAdapter(
     private val onPlayClick: (Recording) -> Unit,
-    private val onDeleteClick: (Recording) -> Unit
+    private val onDeleteClick: (Recording) -> Unit,
+    private val onShareClick: (Recording) -> Unit = {},
+    private val onRenameClick: (Recording) -> Unit = {},
+    private val onSelectionModeChange: (Boolean) -> Unit = {},
 ) : ListAdapter<Recording, RecordingAdapter.RecordingViewHolder>(RecordingDiffCallback()) {
+
+    private var selectionMode = false
+    private val selectedPaths = mutableSetOf<String>()
+
+    /**
+     * Enable or disable selection mode.
+     */
+    fun setSelectionMode(enabled: Boolean) {
+        if (selectionMode != enabled) {
+            selectionMode = enabled
+            if (!enabled) {
+                selectedPaths.clear()
+            }
+            notifyDataSetChanged()
+        }
+    }
+
+    /**
+     * Get currently selected recordings.
+     */
+    fun getSelectedRecordings(): List<Recording> {
+        val selected = selectedPaths.toSet()
+        return currentList.filter { selected.contains(it.file.absolutePath) }
+    }
+
+    /**
+     * Select all recordings.
+     */
+    fun selectAll() {
+        selectedPaths.clear()
+        selectedPaths.addAll(currentList.map { it.file.absolutePath })
+        notifyDataSetChanged()
+    }
+
+    /**
+     * Clear selection.
+     */
+    fun clearSelection() {
+        selectedPaths.clear()
+        notifyDataSetChanged()
+    }
+
+    /**
+     * Check if an item is selected.
+     */
+    fun isSelected(recording: Recording): Boolean = selectedPaths.contains(recording.file.absolutePath)
 
     /**
      * ViewHolder for recording items.
      */
     inner class RecordingViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val checkbox: CheckBox = itemView.findViewById(R.id.checkbox)
         private val thumbnail: ImageView = itemView.findViewById(R.id.thumbnail)
         private val durationOverlay: TextView = itemView.findViewById(R.id.duration_overlay)
         private val fileName: TextView = itemView.findViewById(R.id.file_name)
         private val fileInfo: TextView = itemView.findViewById(R.id.file_info)
         private val resolutionInfo: TextView = itemView.findViewById(R.id.resolution_info)
         private val btnPlay: ImageButton = itemView.findViewById(R.id.btn_play)
+        private val btnShare: ImageButton = itemView.findViewById(R.id.btn_share)
         private val btnDelete: ImageButton = itemView.findViewById(R.id.btn_delete)
 
         private var thumbnailJob: Job? = null
@@ -78,12 +131,71 @@ class RecordingAdapter(
             // Load thumbnail
             loadThumbnail(recording)
 
-            // Set click listeners
-            btnPlay.setOnClickListener { onPlayClick(recording) }
-            btnDelete.setOnClickListener { onDeleteClick(recording) }
+            // Handle selection mode
+            if (selectionMode) {
+                checkbox.visibility = View.VISIBLE
+                checkbox.isChecked = selectedPaths.contains(recording.file.absolutePath)
+                checkbox.setOnCheckedChangeListener { _, isChecked ->
+                    if (isChecked) {
+                        selectedPaths.add(recording.file.absolutePath)
+                    } else {
+                        selectedPaths.remove(recording.file.absolutePath)
+                    }
+                }
 
-            // Make the whole card clickable for play
-            itemView.setOnClickListener { onPlayClick(recording) }
+                // In selection mode, clicking the card toggles selection
+                itemView.setOnClickListener {
+                    checkbox.isChecked = !checkbox.isChecked
+                }
+
+                // Hide action buttons in selection mode
+                btnPlay.visibility = View.GONE
+                btnShare.visibility = View.GONE
+                btnDelete.visibility = View.GONE
+            } else {
+                checkbox.visibility = View.GONE
+
+                // Set click listeners for normal mode
+                btnPlay.setOnClickListener { onPlayClick(recording) }
+                btnShare.setOnClickListener { onShareClick(recording) }
+                btnDelete.setOnClickListener { onDeleteClick(recording) }
+
+                // Make the whole card clickable for play
+                itemView.setOnClickListener { onPlayClick(recording) }
+
+                // Show action buttons in normal mode
+                btnPlay.visibility = View.VISIBLE
+                btnShare.visibility = View.VISIBLE
+                btnDelete.visibility = View.VISIBLE
+            }
+
+            // Long click to show context menu (rename or enter selection mode)
+            itemView.setOnLongClickListener {
+                if (!selectionMode) {
+                    showContextMenu(recording)
+                }
+                true
+            }
+        }
+
+        private fun showContextMenu(recording: Recording) {
+            val context = itemView.context
+            val items = arrayOf(context.getString(R.string.rename), context.getString(R.string.select_multiple))
+
+            android.app.AlertDialog.Builder(context)
+                .setTitle(recording.name)
+                .setItems(items) { _, which ->
+                    when (which) {
+                        0 -> onRenameClick(recording) // Rename
+                        1 -> {
+                            // Enter selection mode
+                            selectedPaths.add(recording.file.absolutePath)
+                            setSelectionMode(true)
+                            onSelectionModeChange(true)
+                        }
+                    }
+                }
+                .show()
         }
 
         private fun loadThumbnail(recording: Recording) {

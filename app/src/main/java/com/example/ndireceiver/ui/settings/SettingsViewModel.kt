@@ -135,6 +135,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
+     * Set language preference.
+     */
+    fun setLanguage(language: com.example.ndireceiver.data.AppLanguage) {
+        settingsRepository.setLanguage(language)
+    }
+
+    /**
      * Refresh storage info.
      */
     fun refreshStorageInfo() {
