@@ -1,8 +1,21 @@
 # NDI HX3 Development Status
 
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-01-31
 
 ## Current Phase: ALL COMPLETE - Ready for Device Testing
+
+### Recent Fixes (2026-01-31)
+- [x] **Kotlin Syntax Error**: Fixed `roundToInt()` extension function usage in PlayerFragment.kt (lines 398, 401)
+  - Changed from: `kotlin.math.roundToInt(expression)`
+  - Changed to: `(expression).roundToInt()`
+  - Build verified: APK generated successfully at 2026-01-31 12:36:41
+
+- [x] **Debug Logging Added**: Right edge pixel cutoff investigation (UncompressedVideoRenderer.kt)
+  - Added logging to monitor Canvas vs Bitmap dimensions
+  - Added logging for srcRect and dstRect coordinates
+  - Purpose: Investigate 1-2 pixel right edge clipping in test pattern
+  - Location: Lines 112-114 (after lockCanvas, before drawBitmap)
+  - Ready for test build to verify dimensions
 
 ## Phase 1: Basic Receive & Display
 
@@ -342,3 +355,127 @@ Install_NDI_SDK_v6_Android/NDI SDK for Android/
 ├── lib/arm64-v8a/     ← libndi.so (already in jniLibs)
 └── examples/C++/      ← Reference implementation
 ```
+
+---
+
+## Phase 6: V0 UI Integration & Testing
+
+| Task | Status |
+|------|--------|
+| V0 UI Component Download | ✅ Complete |
+| Project Analysis (Codex) | ✅ Complete |
+| Integration Strategy (Claude) | ✅ Complete |
+| Test Suite Generation (Gemini) | ✅ Complete |
+| V0 UI Installation | ⏳ Manual steps required |
+| WebView Integration | 📋 Planned |
+| Test Implementation | 📋 Planned |
+
+### Current Status (2026-01-30)
+
+**3 Parallel Tasks Completed:**
+
+1. **Codex - V0 UI Setup** ✅
+   - Analyzed Next.js 16 + React 19 project structure
+   - Identified pnpm as package manager
+   - Documented manual installation steps (sandbox blocked npm/node/pnpm)
+   - Ready for `pnpm install && pnpm dev`
+
+2. **Claude - Integration Strategy** ✅
+   - Comprehensive integration plan written to `ndi-output-claude.md`
+   - **Recommended: Option 3 - Static Export + WebView**
+   - 5-phase implementation plan (3-4 days total)
+   - Detailed JavaScriptInterface API design
+   - Testing strategy included
+
+3. **Gemini - Test Suite Generation** ✅
+   - Comprehensive test skeletons for 100% coverage target
+   - NDI layer: NdiManager, NdiReceiver, NdiFinder, NdiSourceRepository
+   - Media layer: VideoDecoder, VideoRecorder
+   - UI layer: All ViewModels and Fragments
+   - Test dependencies documented
+
+### V0 UI Project Details
+
+**Location:** `ndi-receiver-app/`
+
+**Stack:**
+- Next.js 16.0.10 + React 19.2.0
+- shadcn/ui (Radix UI components)
+- Tailwind CSS v4
+- pnpm package manager
+
+**Screens:**
+- Main Screen - NDI source discovery/selection
+- Player Screen - Video playback controls
+- Recordings Screen - Recording management
+- Settings Screen - App configuration
+
+**Features:**
+- Dark theme optimized for broadcast
+- English/Japanese i18n
+- React Context state management
+- Professional broadcast aesthetic
+
+### Integration Strategy Summary
+
+**Selected Approach:** Static Export + WebView Embedding
+
+**Workflow:**
+1. Configure Next.js for static export (`output: 'export'`)
+2. Build static files to `out/` directory
+3. Copy to Android `assets/web/`
+4. Create WebView Fragment with JavaScriptInterface bridge
+5. Implement bidirectional communication (Kotlin ↔ JavaScript)
+
+**Benefits:**
+- Beautiful professional UI without full rewrite
+- Native NDI performance preserved
+- Offline operation (no network dependency)
+- Low memory overhead
+- Easy maintenance
+
+### Test Coverage Plan
+
+**Generated Test Files:**
+- `NdiManagerTest.kt` - Discovery, connection, error handling
+- `NdiReceiverTest.kt` - Frame capture, buffer management
+- `NdiFinderTest.kt` - Source discovery, deduplication
+- `NdiSourceRepositoryTest.kt` - Caching, persistence
+- `VideoDecoderTest.kt` - H.264/H.265 decoding
+- `VideoRecorderTest.kt` - Recording, muxer, file I/O
+- `MainViewModelTest.kt`, `PlaybackViewModelTest.kt`, etc.
+- `MainFragmentTest.kt`, `PlayerFragmentTest.kt` (Robolectric)
+
+**Required Dependencies:**
+```kotlin
+testImplementation("junit:junit:4.13.2")
+testImplementation("androidx.arch.core:core-testing:2.2.0")
+testImplementation("io.mockk:mockk:1.13.8")
+testImplementation("org.robolectric:robolectric:4.11.1")
+testImplementation("androidx.fragment:fragment-testing:1.6.2")
+```
+
+### Next Steps
+
+1. **Manual V0 Setup:**
+   ```bash
+   cd ndi-receiver-app
+   pnpm install
+   pnpm dev  # Test at http://localhost:3000
+   ```
+
+2. **Implement Tests:**
+   - Copy test skeletons from Gemini output
+   - Run `./gradlew test`
+   - Measure coverage with `./gradlew testDebugUnitTestCoverage`
+
+3. **WebView Integration:**
+   - Follow Claude's integration plan in `ndi-output-claude.md`
+   - Phase 1: Static export setup
+   - Phase 2: WebView Fragment + JavaScriptInterface
+   - Phase 3: Bidirectional communication
+
+4. **Device Testing:**
+   - Test on FPD CP25-J1 tablet
+   - Verify WebView performance
+   - Test touch interactions on 24.5" screen

@@ -40,7 +40,13 @@ class UncompressedVideoRenderer {
     private var rgbaBuffer: ByteBuffer? = null
     private var rowScratch: ByteArray? = null
 
-    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val paint = Paint().apply {
+        // Enable filtering for better scaling quality
+        isFilterBitmap = true
+        isAntiAlias = false
+        isDither = false
+    }
+    private val srcRect = Rect()
     private val dstRect = Rect()
 
     fun setSurface(surface: Surface?) {
@@ -103,9 +109,15 @@ class UncompressedVideoRenderer {
                 return
             }
 
+            // DEBUG: Investigate right edge pixel cutoff
+            Log.d(TAG, "Canvas: ${canvas.width}x${canvas.height}, Bitmap: ${bmp.width}x${bmp.height}")
+            Log.d(TAG, "srcRect: $srcRect, dstRect: $dstRect")
+
             try {
+                // Explicitly map entire bitmap (e.g. 1920x1080) to canvas size
+                srcRect.set(0, 0, bmp.width, bmp.height)
                 dstRect.set(0, 0, canvas.width, canvas.height)
-                canvas.drawBitmap(bmp, null, dstRect, paint)
+                canvas.drawBitmap(bmp, srcRect, dstRect, paint)
             } catch (e: Exception) {
                 Log.e(TAG, "Canvas draw failed", e)
             } finally {

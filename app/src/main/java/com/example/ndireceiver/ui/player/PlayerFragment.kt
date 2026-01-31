@@ -33,6 +33,7 @@ import com.example.ndireceiver.ndi.NdiSourceRepository
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 /**
  * Fragment for displaying NDI video stream with recording capability.
@@ -358,8 +359,54 @@ class PlayerFragment : Fragment() {
             osdBitrate.text = state.bitrateInfo
         }
 
+        // Update aspect ratio when video dimensions change
+        if (state.videoWidth > 0 && state.videoHeight > 0) {
+            updateSurfaceAspectRatio(state.videoWidth, state.videoHeight)
+        }
+
         // Update recording state
         updateRecordingUi(state.recordingState)
+    }
+
+    /**
+     * Update SurfaceView dimensions to maintain video aspect ratio.
+     * Centers the video and adds letterbox/pillarbox as needed.
+     */
+    private fun updateSurfaceAspectRatio(videoWidth: Int, videoHeight: Int) {
+        val parent = surfaceView.parent as? View ?: return
+
+        // Get parent dimensions (screen size)
+        val parentWidth = parent.width
+        val parentHeight = parent.height
+
+        if (parentWidth == 0 || parentHeight == 0) {
+            // Parent not measured yet, try again later
+            parent.post {
+                updateSurfaceAspectRatio(videoWidth, videoHeight)
+            }
+            return
+        }
+
+        // Calculate aspect ratios
+        val videoAspect = videoWidth.toFloat() / videoHeight.toFloat()
+        val parentAspect = parentWidth.toFloat() / parentHeight.toFloat()
+
+        val layoutParams = surfaceView.layoutParams as FrameLayout.LayoutParams
+
+        if (videoAspect > parentAspect) {
+            // Video is wider - fit to width, add letterbox top/bottom
+            layoutParams.width = parentWidth
+            layoutParams.height = (parentWidth / videoAspect).roundToInt()
+        } else {
+            // Video is taller - fit to height, add pillarbox left/right
+            // Add +1 pixel to width to prevent edge clipping
+            layoutParams.width = (parentHeight * videoAspect).roundToInt() + 1
+            layoutParams.height = parentHeight
+        }
+
+        // Center the surface
+        layoutParams.gravity = android.view.Gravity.CENTER
+        surfaceView.layoutParams = layoutParams
     }
 
     /**

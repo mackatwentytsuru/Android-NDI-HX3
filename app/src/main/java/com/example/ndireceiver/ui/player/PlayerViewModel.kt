@@ -46,7 +46,9 @@ data class PlayerUiState(
     val videoInfo: String = "",
     val bitrateInfo: String = "",
     val retryCount: Int = 0,
-    val isAutoReconnecting: Boolean = false
+    val isAutoReconnecting: Boolean = false,
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0
 )
 
 /**
@@ -492,7 +494,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application),
 
         val info = "${frame.width}x${frame.height} @ ${String.format("%.1f", fps)}fps | $label"
 
-        _uiState.value = _uiState.value.copy(videoInfo = info)
+        _uiState.value = _uiState.value.copy(
+            videoInfo = info,
+            videoWidth = frame.width,
+            videoHeight = frame.height
+        )
     }
 
     private fun fourCCLabel(fourCC: Int): String {
