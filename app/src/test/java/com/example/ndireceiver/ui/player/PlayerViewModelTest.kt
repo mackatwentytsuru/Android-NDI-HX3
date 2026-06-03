@@ -3,6 +3,7 @@ package com.example.ndireceiver.ui.player
 import android.app.Application
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import com.example.ndireceiver.ndi.ConnectionState
+import com.example.ndireceiver.ndi.FourCC
 import com.example.ndireceiver.ndi.NdiNative
 import com.example.ndireceiver.ndi.VideoFrameData
 import io.mockk.*
@@ -152,7 +153,7 @@ class PlayerViewModelTest {
             data = buffer,
             lineStrideBytes = 1920 * 4,
             timestamp = 0L,
-            fourCC = NdiNative.FourCC.BGRA,
+            fourCC = FourCC.BGRA,
             isCompressed = false
         )
 
@@ -172,7 +173,7 @@ class PlayerViewModelTest {
             data = buffer,
             lineStrideBytes = 0,
             timestamp = 0L,
-            fourCC = NdiNative.FourCC.H264,
+            fourCC = FourCC.H264,
             isCompressed = true
         )
 
@@ -190,7 +191,7 @@ class PlayerViewModelTest {
             data = buffer,
             lineStrideBytes = 0,
             timestamp = 0L,
-            fourCC = NdiNative.FourCC.HEVC,
+            fourCC = FourCC.HEVC,
             isCompressed = true
         )
 

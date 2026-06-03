@@ -1,6 +1,19 @@
 # NDI HX3 Development Status
 
-**Last Updated:** 2026-01-31
+**Last Updated:** 2026-06-04
+
+## Current Phase: 実機検証実施 — 非圧縮OK / HX3はAdvanced SDK待ち
+
+### 2026-06-04 実機検証＆HX3経路実装
+- ✅ 実機(Pixel 7a)でビルド・インストール・起動・**非圧縮NDI(BGRA)受信表示を確認**（Macのテスト送信機）
+- ✅ 切断/再接続 安定、単体テスト全通過
+- ✅ HX3圧縮パススルー経路を実装（`COMPRESSED_V5`要求 / `NDIlib_compressed_packet_t`解析 / MediaCodec配線 / 単体テスト）— ブランチ `claude/hx3-compressed-mediacodec`
+- ⛔ **HX3は未検証**：同梱は無料の標準SDK(5.6.1)で圧縮データを渡せない。**NDI Advanced SDK の申請・入手が必要**（無料・開発用途）。手順は `docs/HX3-INTEGRATION.md`
+- ⛔ Advanced SDK差し替え後の実機HX3テストは**申請許可待ちのため未実施**
+
+---
+
+## （以下は 2026-01-31 時点の記録）
 
 ## Current Phase: ALL COMPLETE - Ready for Device Testing
 

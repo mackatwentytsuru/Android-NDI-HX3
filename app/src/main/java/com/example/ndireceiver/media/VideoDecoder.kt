@@ -33,6 +33,12 @@ class VideoDecoder {
     @Volatile
     private var isRunning = false
 
+    // A compressed stream is only decodable starting from a keyframe (the
+    // keyframe carries the SPS/PPS/VPS codec config). Drop everything until the
+    // first one arrives, otherwise MediaCodec errors on the leading delta frames.
+    @Volatile
+    private var sawKeyframe = false
+
     private val frameQueue = LinkedBlockingQueue<VideoFrameData>(MAX_QUEUE_SIZE)
 
     private var currentWidth = 0
@@ -89,6 +95,9 @@ class VideoDecoder {
             start()
         }
 
+        // New decoder instance must re-sync to a keyframe before decoding.
+        sawKeyframe = false
+
         Log.i(TAG, "Decoder created: $mimeType ${width}x${height}")
     }
 
@@ -116,6 +125,14 @@ class VideoDecoder {
      */
     fun submitFrame(frame: VideoFrameData) {
         if (!isRunning) return
+
+        // Wait for the first keyframe before feeding the decoder.
+        if (!sawKeyframe) {
+            if (!frame.isKeyframe) {
+                return
+            }
+            sawKeyframe = true
+        }
 
         lastFrameRateN = frame.frameRateN
         lastFrameRateD = frame.frameRateD
@@ -148,12 +165,17 @@ class VideoDecoder {
                     data.rewind()
                     inputBuffer.put(data)
 
+                    val flags = if (frame.isKeyframe) {
+                        MediaCodec.BUFFER_FLAG_KEY_FRAME
+                    } else {
+                        0
+                    }
                     decoder?.queueInputBuffer(
                         inputIndex,
                         0,
                         data.limit(),
                         frame.timestamp,
-                        0
+                        flags
                     )
                 }
             } catch (e: Exception) {

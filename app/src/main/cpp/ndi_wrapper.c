@@ -29,9 +29,24 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-/* Kotlin FourCC constants for compressed frames. */
-static const uint32_t FOURCC_H264 = 0x34363248; /* 'H264' */
-static const uint32_t FOURCC_HEVC = 0x43564548; /* 'HEVC' */
+/* Kotlin FourCC constants for compressed frames.
+ *
+ * NDI signals the compressed bandwidth tier via the case of the FourCC:
+ *   uppercase 'H264'/'HEVC' = highest_bandwidth (full resolution)
+ *   lowercase 'h264'/'hevc' = lowest_bandwidth  (preview substream)
+ * We accept both so compressed passthrough works regardless of tier. */
+static const uint32_t FOURCC_H264         = 0x34363248; /* 'H264' highest bandwidth */
+static const uint32_t FOURCC_HEVC         = 0x43564548; /* 'HEVC' highest bandwidth */
+static const uint32_t FOURCC_H264_LOWBAND = 0x34363268; /* 'h264' lowest bandwidth  */
+static const uint32_t FOURCC_HEVC_LOWBAND = 0x63766568; /* 'hevc' lowest bandwidth  */
+
+/* NDI Advanced SDK compressed-passthrough receive color format.
+ * Not present in the free/standard SDK header, so we use the documented numeric
+ * value. With the standard libndi.so this value is ignored (the SDK falls back
+ * to a default); with the Advanced SDK libndi.so it delivers H.264/HEVC frames
+ * as NDIlib_compressed_packet_t which the app decodes via Android MediaCodec.
+ * Source: Processing.NDI.Advanced.h -> NDIlib_recv_color_format_compressed_v5 = 307. */
+#define NDI_RECV_COLOR_FORMAT_COMPRESSED_V5 307
 
 /* ============================================================================
  * Global State
@@ -130,6 +145,8 @@ static NDIlib_recv_color_format_e map_color_format(jint colorFormat) {
         case 3: return NDIlib_recv_color_format_UYVY_RGBA;
         case 100: return NDIlib_recv_color_format_fastest;
         case 101: return NDIlib_recv_color_format_best;
+        /* Compressed H.264/HEVC passthrough (NDI Advanced SDK only). */
+        case 200: return (NDIlib_recv_color_format_e)NDI_RECV_COLOR_FORMAT_COMPRESSED_V5;
         default: return NDIlib_recv_color_format_UYVY_BGRA;
     }
 }
@@ -652,7 +669,8 @@ Java_com_example_ndireceiver_ndi_NdiNative_receiverCaptureVideo(
     }
 
     const uint32_t fourcc = (uint32_t)handle->frame.FourCC;
-    const bool is_compressed = (fourcc == FOURCC_H264) || (fourcc == FOURCC_HEVC);
+    const bool is_compressed = (fourcc == FOURCC_H264) || (fourcc == FOURCC_HEVC) ||
+                               (fourcc == FOURCC_H264_LOWBAND) || (fourcc == FOURCC_HEVC_LOWBAND);
 
     if (handle->frame.p_data == NULL) {
         LOGW("receiverCaptureVideo: Video frame had NULL p_data");

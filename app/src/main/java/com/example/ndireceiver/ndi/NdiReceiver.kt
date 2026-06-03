@@ -33,7 +33,9 @@ data class VideoFrameData(
     val lineStrideBytes: Int,
     val timestamp: Long,
     val fourCC: FourCC,
-    val isCompressed: Boolean = false
+    val isCompressed: Boolean = false,
+    /** For compressed frames: true when this is an I-frame (carries codec config). */
+    val isKeyframe: Boolean = false
 )
 
 /**
@@ -60,6 +62,23 @@ class NdiReceiver {
         private const val THREAD_JOIN_TIMEOUT_MS = 3000L
         private const val SYNC_JOIN_TIMEOUT_MS = 500L // Short timeout for sync disconnect
         private const val CONNECTION_LOST_THRESHOLD = 5
+
+        /**
+         * NDI|HX (HX3) compressed-passthrough mode.
+         *
+         * When false (default): the receiver requests decoded BGRA pixels
+         * (BGRX_BGRA). This is correct for full-bandwidth/uncompressed NDI and
+         * is the only mode the free/standard SDK can serve. HX3 sources show a
+         * black screen in this mode because the standard SDK lacks the HX
+         * decode libraries.
+         *
+         * When true: the receiver requests compressed H.264/HEVC passthrough
+         * (COMPRESSED_V5) so HX3 frames are decoded on-device with MediaCodec.
+         * This REQUIRES the NDI Advanced SDK libndi.so to be installed in
+         * jniLibs — see docs/HX3-INTEGRATION.md. Do not enable it with the
+         * standard SDK or reception will fall back to defaults.
+         */
+        const val USE_COMPRESSED_HX = false
     }
 
     // Use AtomicLong for thread-safe access to receiver pointer
@@ -114,11 +133,17 @@ class NdiReceiver {
         consecutiveNullFrames = 0
 
         try {
-            // Create receiver
+            // Create receiver. In HX3 mode we ask the SDK for compressed
+            // H.264/HEVC passthrough; otherwise decoded BGRA pixels.
+            val colorFormat = if (USE_COMPRESSED_HX) {
+                NdiNative.ColorFormat.COMPRESSED_V5
+            } else {
+                NdiNative.ColorFormat.BGRX_BGRA
+            }
             val newPtr = NdiNative.receiverCreate(
                 receiverName = "Android NDI Receiver",
                 bandwidth = NdiNative.Bandwidth.HIGHEST,
-                colorFormat = NdiNative.ColorFormat.BGRX_BGRA,
+                colorFormat = colorFormat,
                 allowVideoFields = true
             )
 
@@ -178,19 +203,44 @@ class NdiReceiver {
                         val isCompressed = fourCC == FourCC.H264 ||
                                           fourCC == FourCC.HEVC
 
-                        val frameData = VideoFrameData(
-                            width = videoFrame.width,
-                            height = videoFrame.height,
-                            frameRateN = videoFrame.frameRateN,
-                            frameRateD = videoFrame.frameRateD,
-                            data = videoFrame.data,
-                            lineStrideBytes = videoFrame.lineStrideBytes,
-                            timestamp = videoFrame.timestamp,
-                            fourCC = fourCC,
-                            isCompressed = isCompressed
-                        )
+                        val frameData = if (isCompressed) {
+                            // HX3: the native buffer is an NDIlib_compressed_packet_t.
+                            // Parse it into a MediaCodec-ready Annex-B copy that
+                            // outlives the native frame (decoding is asynchronous).
+                            NdiCompressedPacket.parse(videoFrame.data)?.let { pkt ->
+                                VideoFrameData(
+                                    width = videoFrame.width,
+                                    height = videoFrame.height,
+                                    frameRateN = videoFrame.frameRateN,
+                                    frameRateD = videoFrame.frameRateD,
+                                    data = ByteBuffer.wrap(pkt.annexB),
+                                    lineStrideBytes = 0,
+                                    timestamp = videoFrame.timestamp,
+                                    fourCC = pkt.codec,
+                                    isCompressed = true,
+                                    isKeyframe = pkt.isKeyframe
+                                )
+                            }
+                        } else {
+                            // Uncompressed: pass the direct buffer through; the
+                            // renderer copies it synchronously inside the callback,
+                            // before we free the native frame below.
+                            VideoFrameData(
+                                width = videoFrame.width,
+                                height = videoFrame.height,
+                                frameRateN = videoFrame.frameRateN,
+                                frameRateD = videoFrame.frameRateD,
+                                data = videoFrame.data,
+                                lineStrideBytes = videoFrame.lineStrideBytes,
+                                timestamp = videoFrame.timestamp,
+                                fourCC = fourCC,
+                                isCompressed = false
+                            )
+                        }
 
-                        frameCallback?.onVideoFrame(frameData)
+                        if (frameData != null) {
+                            frameCallback?.onVideoFrame(frameData)
+                        }
 
                         // Free the frame - check pointer is still valid
                         val currentPtr = receiverPtrAtomic.get()
