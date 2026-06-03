@@ -24,6 +24,9 @@ enum class FourCC {
                 NdiNative.FourCC.I420 -> I420
                 NdiNative.FourCC.H264 -> H264
                 NdiNative.FourCC.HEVC -> HEVC
+                // NDI|HX low-bandwidth (preview) tier uses lowercase FourCCs.
+                NdiNative.FourCC.H264_LOW -> H264
+                NdiNative.FourCC.HEVC_LOW -> HEVC
                 else -> UNKNOWN
             }
         }

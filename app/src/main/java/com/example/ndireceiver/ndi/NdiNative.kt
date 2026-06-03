@@ -321,6 +321,12 @@ object NdiNative {
         const val UYVY_RGBA = 3
         const val FASTEST = 100  // Let NDI choose fastest format
         const val BEST = 101     // Let NDI choose best quality format
+
+        // Compressed H.264/HEVC passthrough for NDI|HX (HX3) hardware decode.
+        // Maps in the native wrapper to NDIlib_recv_color_format_compressed_v5 (=307).
+        // REQUIRES the NDI Advanced SDK libndi.so; ignored by the free/standard SDK.
+        // See docs/HX3-INTEGRATION.md.
+        const val COMPRESSED_V5 = 200
     }
 
     object FourCC {
@@ -331,7 +337,9 @@ object NdiNative {
         const val RGBX = 0x58424752  // 'RGBX' - 32-bit RGB (no alpha)
         const val NV12 = 0x3231564E  // 'NV12' - YUV 4:2:0 planar
         const val I420 = 0x30323449  // 'I420' - YUV 4:2:0 planar
-        const val H264 = 0x34363248  // 'H264' - Compressed H.264
-        const val HEVC = 0x43564548  // 'HEVC' - Compressed H.265
+        const val H264 = 0x34363248  // 'H264' - Compressed H.264 (highest bandwidth)
+        const val HEVC = 0x43564548  // 'HEVC' - Compressed H.265 (highest bandwidth)
+        const val H264_LOW = 0x34363268  // 'h264' - Compressed H.264 (lowest bandwidth / preview)
+        const val HEVC_LOW = 0x63766568  // 'hevc' - Compressed H.265 (lowest bandwidth / preview)
     }
 }
